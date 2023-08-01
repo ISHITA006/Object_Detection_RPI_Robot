@@ -1,0 +1,275 @@
+import os
+
+from androidBTSocket import AndroidBTSocket
+from stmLinker import StmLinker
+from algoClient import AlgoClient
+
+from threading import Thread
+import queue
+import time
+
+from configObject import IMG_FORMAT
+from protocolsMapping import ProtocolHeaders
+
+import socket
+from picamera import PiCamera
+from picamera.array import PiRGBArray
+import imagezmq
+from utils import helpers
+
+class MultiProcess:
+
+    def __init__(self):
+        os.system("lsusb")
+        self.android = AndroidBTSocket()
+        self.stm = StmLinker()
+        self.algo = AlgoClient()
+
+        self.imgServerUrl = "tcp://192.168.32.39:5555"
+        self.helper = helpers.Helpers()
+        self.message_queue = queue.Queue()
+        self.android_mqueue = queue.Queue()
+        self.algo_mqueue = queue.Queue()
+        self.img_queue = queue.Queue()
+
+        self.androidConnectThread = Thread(target=self.androidConnect)
+        self.algoConnectThread = Thread(target=self.algoConnect)
+        self.stmConnectThread = Thread(target=self.stmConnect)
+
+        self.androidReadThread = Thread(target=self.androidRead)
+        self.algoReadThread = Thread(target=self.algoRead)
+
+        # NEED TO USE LATER
+        self.stmWriteThread = Thread(target=self.stmWriteComms)
+        self.androidWriteThread = Thread(target=self.androidCommsWrite)
+        self.algoWriteThread = Thread(target=self.algoCommsWrite)
+
+        self.imageThread = Thread(target=self.imageSend)
+        self.camera = PiCamera()
+
+    def start(self):
+        try:
+            self.androidConnectThread.start()
+            self.stmConnectThread.start()
+
+            self.androidReadThread.start()
+            self.algoReadThread.start()
+            self.stmWriteThread.start()
+            self.imageThread.start()
+        except Exception as error:
+            print("[START FAILED] something went wrong with starting")
+            print(error)
+
+
+########################################### CONNECTION METHODS ########################################################
+    def androidConnect(self):
+        try:
+            self.android.connectAndroid()
+        except Exception as error:
+            print("[CONNECT TO ANDROID THREAD] Error occured.")
+            print(error)
+
+    def algoConnect(self):
+        try:
+            self.algo.connectToAlgoServer()
+        except Exception as error:
+            print("[CONNECT TO ALGO THREAD] Error occured.")
+
+    def stmConnect(self):
+        try:
+            self.stm.connectStm(1000)
+        except Exception as error:
+            print("[CONNECT TO STM] Error occurred")
+
+######################################################################################################################
+
+################################################## READ METHODS #######################################################
+
+
+    def androidRead(self):
+        print("[Android Read Thread] android read thread start")
+        while True:
+            try:
+                message = self.android.readFromAndroid()
+                print(f"Message from androidRead: {message}")
+
+                if message is None:
+                    continue
+                messageToEnqueue = self.helper.messageFormatBundler(
+                    ProtocolHeaders.ALGO_HEADER,
+                    message
+                )
+                self.algo_mqueue.put(messageToEnqueue)
+                print(list(self.algo_mqueue.queue))
+            except Exception as error:
+                print("[Android read thread] error")
+                print(error)
+
+    def algoRead(self):
+        try:
+            while True:
+                try:
+                    message = self.algo.readFromServer()
+                    stm_formatted_path = self.helper.algo_path_clean(message)
+                    for path_step in stm_formatted_path:
+                        self.message_queue.put(self.helper.messageFormatBundler(
+                            ProtocolHeaders.STM_HEADER,
+                            path_step
+                        ))
+                except Exception as error:
+                    print(error)
+        except Exception as error:
+            print(error)
+
+#######################################################################################################################
+
+########################################## WRITE METHODS ##############################################################
+
+    def stmWriteComms(self):
+        while True:
+            try:
+                if not self.message_queue.empty():
+                    message = self.message_queue.get()
+                    protocol_header, data = message['target'], message['data']
+                    if protocol_header == ProtocolHeaders.STM_HEADER:
+                        android_coordinate_msg = self.helper.android_coord_format(data[0:4])
+                        self.stm.writeToStm(data[5])
+                        if data[5] == 'x010':
+                            img = self.imageCapture(data[4])
+                            self.img_queue.put(img)
+                        coord_msg_bundled = self.helper.messageFormatBundler(
+                            "AND".encode(),
+                            android_coordinate_msg)
+                        print("coord msg bundled")
+                        self.android.writeToAndroid(coord_msg_bundled)
+                        self.stm.writeToStm(data)
+                        feedback = self.stm.readFromStm().decode()
+                        while True:
+                            if feedback != f'{data[5]}':
+                                continue
+                            else:
+                                print(f"Feedback: {feedback}\n\n")
+                                break
+                    else:
+                        print("Invalid header")
+
+            except Exception as error:
+                print(error)
+
+    def androidCommsWrite(self):
+        while True:
+            try:
+                if not self.android_mqueue.empty():
+                    message = self.message_queue.get()
+                    protocol_header, data = message['target'], message['data']
+                    if protocol_header == ProtocolHeaders.ANDROID_HEADER:
+                        print(f"[ANDROID COMMS WRITE] Writing Data to android {message}")
+                        self.android.writeToAndroid(data)
+                    else:
+                        print("[ANDROID WRITE] Invalid header for Android Write thread")
+                        print(protocol_header)
+            except Exception as error:
+                print(error)
+
+    def algoCommsWrite(self):
+        while True:
+            try:
+                if not self.algo_mqueue.empty():
+                    message = self.algo_mqueue.get()
+                    protocol_header, data = message['target'], message['data']
+                    if protocol_header == ProtocolHeaders.ALGO_HEADER:
+                        print("[MULTI COMMS WRITE] This message is for algorithm")
+                        data = self.helper.convert_format_json(data.decode())
+                        self.algo.send_message_to_server((data + "\n").encode())
+
+            except Exception as error:
+                print(error)
+
+
+########################################## IMAGE RECOGNITION ##########################################################
+
+    def imageCapture(self, obstacle_id):
+        try:
+            print("[CAPTURING IMAGE] Capturing image...")
+            time.sleep(1)
+            rawCapture = PiRGBArray(self.camera)
+            print("[IMAGE CAPTURING] Image capturing...")
+            self.camera.capture(rawCapture, IMG_FORMAT)
+            imageCaptured = rawCapture.array
+            print("[IMAGE CAPTURED] Image capture success")
+            imageBatchedInfo = {"obsId": obstacle_id, "image": imageCaptured}
+            return imageBatchedInfo
+        except Exception as error:
+            print(f"[IMAGE CAPTURE FAILED] Something went wrong with capturing image")
+            print(error)
+
+
+    def imageSend(self):
+        while True:
+            if not self.img_queue.empty():
+                print(f"Queue Length: {self.img_queue.qsize()}")
+                try:
+                    sender = imagezmq.ImageSender(connect_to=self.imgServerUrl)
+                    rpiName = socket.gethostname()
+                    # remove first image from queue
+                    print("Image Popped")
+                    image_batched_info = self.img_queue.get()
+                    obsId, image = image_batched_info['obsId'], image_batched_info['image']
+                    # send image to the server for processing, retrieve reply
+                    reply = sender.send_image(rpiName, image)
+                    # decode bytes encoded reply
+                    reply = reply.decode('utf-8')
+                    print(f"reply: {reply}")
+                    android_formatted_str = self.helper.android_obs_format(reply, obsId)
+                    print(f"Android formatted str: {android_formatted_str}")
+                    self.android.writeToAndroid(android_formatted_str)
+                    if reply == 'End':
+                        break
+
+                    print("end loop send")
+                except Exception as error:
+                    print("############")
+                    print("\n[IMAGE SEND] An error occurred\n")
+                    print(error)
+                    print("############\n")
+
+    ############################################### RETRYABLE CONNECTION ##############################################
+
+    def reconnectAndroid(self):
+        print("Executing reconnect android")
+        self.android.clientDisconnect()
+
+        self.androidReadThread.join()
+        self.androidWriteThread.join()
+        self.androidConnectThread.join()
+
+        self.androidConnectThread = Thread(target=self.androidConnect)
+        self.androidReadThread = Thread(target=self.androidRead)
+        self.androidWriteThread = Thread(target=self.androidCommsWrite)
+
+        self.androidConnectThread.start()
+        self.androidConnectThread.join()
+        self.androidReadThread.start()
+        self.androidWriteThread.start()
+
+    def reconnectAlgo(self):
+        self.algo.disconnectFromAlgo()
+
+        self.algoReadThread.join()
+        self.algoConnectThread.join()
+        self.androidWriteThread.join()
+
+        self.algoConnectThread = Thread(target=self.algoConnect)
+        self.algoReadThread = Thread(target=self.algoRead)
+        self.algoWriteThread = Thread(target=self.algoCommsWrite)
+
+        self.algoConnectThread.start()
+        self.algoConnectThread.join()
+        self.algoReadThread.start()
+        self.algoWriteThread.start()
+
+    ##################################################################################################################
+
+if __name__ == "__main__":
+    multiProc = MultiProcess()
+    multiProc.start()

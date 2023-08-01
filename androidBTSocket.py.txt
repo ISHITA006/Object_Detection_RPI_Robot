@@ -1,0 +1,95 @@
+import time
+from uuid import UUID
+import bluetooth as bt
+from time import sleep
+
+import socket
+
+from config import UUID, RFCOMM_PORT
+from utils import helpers
+class AndroidBTSocket:
+
+    # Constructor for initialisation of an instance of AndroidBTSocket class
+    def __init__(self):
+        self.helpers = helpers.Helpers()
+        self.server_sock = bt.BluetoothSocket(bt.RFCOMM)
+        self.server_sock.bind(("", 10))
+        self.client_sock = None
+        self.client_info = None
+
+        self.server_sock.listen(10)
+        self.isConnected = False
+        bt.advertise_service(self.server_sock, "MDP-Server",
+                            service_id=UUID,
+                            service_classes=[UUID, bt.SERIAL_PORT_CLASS],
+                            profiles=[bt.SERIAL_PORT_PROFILE],
+                            protocols=[bt.OBEX_UUID])
+        
+        print(f"[INITIALIZED] Server Socket:{self.server_sock}\nWaiting for connection on RFCOMM channel...")
+
+    # Method to connect to the Android device
+    def connectAndroid(self):
+        if not self.isConnected:
+            try:
+                print("[ESTABLISHING] Establishing connection with Android Tablet...")
+                self.client_sock, self.client_info = self.server_sock.accept()
+                print(f"[CONNECTION] Accepted connection on RFCOMM channel {RFCOMM_PORT}")
+
+                print("\nCLIENT SOCK")
+                print(self.client_sock)
+                print("\nCLIENT INFO")
+                print(self.client_info)
+                self.isConnected = True
+            except Exception as error:
+                print("[CONNECTION FAILED] Failed to establish connection with Android Tablet")
+                if self.client_sock is not None:
+                    self.client_sock.close()
+                    self.client_sock = None
+                    print("[RETRYING] Retrying bluetooth connection to Android...")
+
+    # Method for sending a message to the Android tablet
+    # @param message: The message that is to be sent to the Android tablet.
+    def writeToAndroid(self, message):
+        try:
+            print("[SENDING MESSAGE] Sending message...")
+            try:
+                self.client_sock.send(message.encode())
+                print("[SUCCESS] Send message success")
+            except Exception as error:
+                print("send message error")
+                print(error)
+        except:
+            print("[MESSAGE FAILED] Failed to send message")
+    
+    # Method to receive a message from the Android tablet, in the form of bytes which will be subsequently decoded.
+    def readFromAndroid(self):
+        try:
+            messageInBytes = self.client_sock.recv(1024)
+            print(messageInBytes)
+            messageWithoutEscapeChars = self.helpers.removeTrailCarrRet(messageInBytes)
+
+            print(f"[READ MESSAGE] Message Read: ${messageWithoutEscapeChars}")
+            return messageWithoutEscapeChars if len(messageWithoutEscapeChars) != 0 else None
+        except Exception as error:
+            print("[READ FAILURE] Failed to read message sent from Android Tablet")
+            print(error)
+            raise Exception
+
+    def clientDisconnect(self):
+        while True:
+            try:
+                if self.client_sock is not None:
+                    self.client_sock.close()
+                    self.client_sock = None
+                    self.isConnected = False
+                    print("[CLIENT DISCONNECT SUCCESS] Successfully disconnected client socket")
+            except Exception as error:
+                print("[CLIENT DISCONNECT FAILURE] Failed to disconnect client socket")
+                print(error)
+
+if __name__ == "__main__":
+    abt = AndroidBTSocket()
+    abt.connectAndroid()
+    time.sleep(2)
+    abt.writeToAndroid(f'{{"TARGET": "1,11"}}')
+

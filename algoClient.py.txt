@@ -1,0 +1,61 @@
+import socket
+from threading import Thread
+import time
+# from config import TCPPORT, FORMAT, HEADER
+SERVER_URL = "192.168.32.39"
+FORMAT = 'utf-8'
+TCPPORT = 5050
+HEADER = 1024
+class AlgoClient:
+
+    def __init__(self):
+        self.addr = (SERVER_URL, TCPPORT)
+        self.client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    def connectToAlgoServer(self):
+        try:
+            self.client.connect(self.addr)
+            print(f"[ALGO SERVER CONNECT] Successfully connected to server {SERVER_URL}")
+        except Exception as error:
+            print("[ALGO SERVER CONNNECT] Error occurred during connection. Failed to connect.")
+            print(error)
+
+    def readFromServer(self):
+        while True:
+            try:
+                msg = self.client.recv(1024*256)
+                messageDecoded = msg.decode(FORMAT)
+                print(f"[ALGO SERVER READ] Read message successfully. Message: {messageDecoded}")
+                return messageDecoded
+            except Exception as error:
+                print("[ALGO SERVER READ] Failed to read message, an error occurred")
+                print(error)
+
+    def send_message_to_server(self, msg):
+            time.sleep(1)
+            try:
+                self.client.send(msg)
+                print("[ALGO SERVER SEND] Sent message successfully")
+            except Exception as error:
+                print("[ALGO SEND TO SERVER] Failed to send message to server, an error occurred")
+                print(error)
+
+    def messageFormat(self, message):
+        pathList = message.split('\n')
+        splittedPathList = [path.split(" ") for path in pathList]
+        return splittedPathList
+
+    def disconnectFromAlgo(self):
+        try:
+            if self.client is not None:
+                self.client.close()
+        except Exception as error:
+            print(error)
+
+if __name__ == "__main__":
+    aClient = AlgoClient()
+    aClient.connectToAlgoServer()
+    t1 = Thread(target=aClient.readFromServer)
+    t2 = Thread(target=aClient.send_message_to_server, args=["hello from client\n"])
+    t1.start()
+    t2.start()

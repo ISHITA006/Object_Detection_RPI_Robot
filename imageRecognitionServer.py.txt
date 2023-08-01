@@ -1,0 +1,55 @@
+import socket
+
+import cv2
+import imagezmq
+from datetime import datetime
+from configObject import TCPPORT
+from yolov7 import Yolov7
+SERVER = socket.gethostbyname(socket.gethostname())
+ADDR = (SERVER, TCPPORT)
+print(socket.gethostname())
+
+class ImageRecognitionServer:
+    
+    def __init__ (self):
+        print(SERVER)
+        self.imageHub = imagezmq.ImageHub()
+        self.yv7 = Yolov7()
+        print(f"[IMAGE REC SERVER Initialised] Init Image Rec Server")
+
+    def handleClientImage(self):
+        try:
+            while True:
+                try:
+                    print(f"[IMAGE HANDLING] RECEIVING RPI IMAGE.")
+                    rpiName, image = self.imageHub.recv_image()
+                    print(f"[IMAGE RECEIVED] Received image from {rpiName}")
+                    imageName = f"image{hash(datetime.now())}"
+                    imageFullName = f"{imageName}.jpg"
+                    cv2.imwrite(f"test/images/{imageFullName}", image)
+                    results = self.yv7.detect(imageFullName, "best_lra_weights_12102022.pt")
+                    print(f"Results: {results}")
+                    self.imageHub.send_reply(results.encode())
+
+                except Exception as error:
+                    print(error)
+                    return
+        except Exception as error:
+
+            print("##############")
+            print("\n[CLIENT IMAGE ERROR] Something went wrong with image receive\n")
+            print(error)
+            print("\n######\n")
+
+
+    def serverListen(self):
+        try:
+            self.handleClientImage()
+        except Exception as error:
+            print(error)
+
+
+if __name__ == "__main__":
+    imreg = ImageRecognitionServer()
+    imreg.handleClientImage()
+    

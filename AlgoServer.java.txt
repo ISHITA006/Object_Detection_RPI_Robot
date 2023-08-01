@@ -1,0 +1,139 @@
+package astar;
+//package RpiSocket;
+import java.net.*;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.io.*;
+
+public class AlgoServer {
+	static int TCPPORT = 5050;
+    static String IPADDR = "192.168.32.39";
+    ServerSocket serverSocket;
+    Socket s;
+    int count = 0;
+
+    public AlgoServer() {
+        try {
+            this.serverSocket = new ServerSocket(AlgoServer.TCPPORT, 0, InetAddress.getByName(AlgoServer.IPADDR));
+        } catch (Exception e) {
+            System.out.println("[SERVER SOCKET INIT] Server socket init failed");
+        }
+    }
+
+    Runnable listenConnThread = new Runnable() {
+        public void run() {
+            AlgoServer.this.listenForConn();
+        }
+    };
+    Runnable readMesageThread = new Runnable() {
+        public void run() {
+            AlgoServer.this.readmessage();
+        }
+    };
+    Runnable writeMessageThread = new Runnable() {
+        public void run() {
+            AlgoServer.this.writeToClient("Message from Server");
+        }
+    };
+
+
+    public void listenForConn() {
+        while (true) {
+            try {
+                Thread.	sleep(1000);
+                System.out.println("[SERVER LISTENING] Listening for connection");
+                this.s = serverSocket.accept();
+                System.out.println("[CONNECTION] A client has connected");
+            } catch (Exception e) {
+            }
+        }
+    }
+
+    public void readmessage() {
+        System.out.println("[SERVER READ MESSAGE] Server reading message");
+        while (true) {
+            try{
+
+                InputStreamReader in = new InputStreamReader(this.s.getInputStream());
+                BufferedReader bf = new BufferedReader(in);
+                String message = bf.readLine();
+                String[] messageArr = null;
+                messageArr = message.split(" ");
+                Node bot = new Node(1,1);
+                bot.setDir(1);
+
+                ArrayList<Obstacle> obstacles = new ArrayList<>(1);
+                HashMap<Integer, Obstacle> orderedObstacles = new HashMap<>(obstacles.size());
+                for (int i = 0; i < messageArr.length; i+=4) {
+                	int x = Integer.parseInt(messageArr[i]);
+                	int y = Integer.parseInt(messageArr[i+1]);
+                	int obsID = Integer.parseInt(messageArr[i+2]);
+                	String side = messageArr[i+3];
+                	int dir;
+                	switch(side) {
+                		case "N":
+                			dir = 1;
+                			break;
+                		case "S":
+                			dir = 3;
+                			break;
+                		case "E":
+                			dir = 0;
+                			break;
+                		case "W":
+                			dir = 2;
+                			break;
+                		default:
+                			dir = 1;
+                			break;
+                	}
+                	obstacles.add(new Obstacle(obsID, x, y, dir));
+                }
+                final int MAP_SIZE = 20;
+                final AMap amap = new AMap(MAP_SIZE, obstacles);
+                final AMapCell[][] map = amap.getMap();
+                Map<Node, Node> IcameFrom =  new HashMap<>();
+                astarPathFinder pathFinder = new astarPathFinder(MAP_SIZE, obstacles, map, IcameFrom);
+                ArrayList<ArrayList<String>> final_path = pathFinder.execute3(bot);
+
+                StringBuilder pathString = new StringBuilder();
+                int count = 0;
+                for (int i = 1; i < final_path.size(); i++) {
+                	
+                	ArrayList<String> subpath = final_path.get(i);
+                	if (subpath.size() == 0) continue;
+                	for (String s : subpath) {
+                		System.out.println(s);
+                		pathString.append(s + "\n");
+                	}
+                }
+                writeToClient(pathString.toString());
+                this.count+=1;
+        } catch(Exception e){
+        }
+    }
+    }
+    public void writeToClient(String message) {
+        try {
+            PrintWriter pr = new PrintWriter(s.getOutputStream());
+            pr.println(message);
+            pr.flush();
+            System.out.println("[WRITE TO CLIENT] Successfully written to client");
+        }
+        catch(Exception e) {
+
+        }
+    }
+    public boolean isConnected() {
+        return this.s.isConnected();
+    }
+    public static void main(String[] args) {
+        AlgoServer aServer = new AlgoServer();
+        new Thread(aServer.listenConnThread).start();
+        new Thread(aServer.readMesageThread).start();
+        new Thread(aServer.writeMessageThread).start();
+    }
+}
+

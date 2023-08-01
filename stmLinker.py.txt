@@ -1,0 +1,78 @@
+import serial
+from time import sleep
+from config import SERIAL_PORT, BAUD_RATE
+
+class StmLinker:
+     
+    # Constructor for initialising an instance of the ArduinoLinker class
+    # @param serial_port: the name of the port being used. By default '/dev/ttyUSB0' as per mentioned in set up documentation
+    # @param baud_rate: The rate at which the port operates. By default 115200 as per the set up documentation
+    def __init__(self, serial_port=SERIAL_PORT, baud_rate=BAUD_RATE):
+        self.serial_port = serial_port
+        self.baud_rate = baud_rate
+        self.connection = None
+    
+     
+    # Method that is used to establish connection between the STM32F board and the rpi.
+    # @param tryLimit: The number of tries allowed for communication establishment.    
+    def connectStm(self, tryLimit):
+        tries = 0
+        isConnected = False
+        while not isConnected:
+            try:
+                if tries <= tryLimit:
+                    self.connection = serial.Serial(self.serial_port, self.baud_rate)
+
+                    if self.connection is not None:
+                        print("[CONNECTED] Successfully connected to STM Board")
+                        isConnected = True        
+                else:
+                    print("[FAILED] Connection to STM failed, trying again...")
+                    return
+                    
+            except Exception as error:
+                if tries >= tryLimit:
+                    print("[FAILED] Connection to STM failed")
+                    self.connection.close()
+            
+            tries += 1 
+    
+    # Method that is used to read encoded bytes from the STM32F board
+    def readFromStm(self):
+        try:
+            while True:
+                message = self.connection.read(4)
+                print(f"[STM MESSAGE] Message: {message}")
+                return message
+        except Exception as error:
+            print("[STM READ FAILED] Error occurred while reading")
+            print(error)
+        
+        
+    # Method that is used to send a string encoded message to the STM32 board.
+    # @param message: the message string, which will be encoded to bytes format before sending 
+    # to the STM32F board
+    def writeToStm(self, message):
+        try:
+            print("[WRITING] Writing to STM...")
+            self.connection.write(message.encode())
+            print("[WRITE SUCCESS] Success sent message to the STM")
+        except Exception as error:
+            print("[WRITE FAILED] Failed to write to STM")
+            print(error)
+
+    # Method that is used to handle disconnection from STM32F     
+    def handleDisconnectStm(self):
+        try:
+            if self.connection is not None:
+                self.connection.close()
+        except Exception as error:
+            print("[DISCONNECT FAILURE] Failed to disconnect to STM32F") 
+            print(error)  
+
+           
+if __name__ == "__main__":
+    print("Hello world")
+
+
+    

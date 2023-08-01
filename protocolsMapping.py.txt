@@ -1,0 +1,6 @@
+class Append:
+    NEWLINE = '\n'.encode()
+class ProtocolHeaders:
+    ANDROID_HEADER = "AND".encode()
+    STM_HEADER = "STM".encode()
+    ALGO_HEADER = "ALGO".encode()

@@ -1,0 +1,193 @@
+import os
+
+from androidBTSocket import AndroidBTSocket
+from stmLinker import StmLinker
+
+from threading import Thread
+import queue
+
+from protocolsMapping import ProtocolHeaders
+
+import socket
+import imagezmq
+from imutils.video import VideoStream
+from utils import helpers
+
+class Task2MultiThread:
+    def __init__(self):
+        os.system("lsusb")
+        os.system("sudo hciconfig hci0 piscan")
+        self.android = AndroidBTSocket()
+        self.stm = StmLinker()
+
+        self.imgServerUrl = "tcp://192.168.32.50:5555"
+        self.helper = helpers.Helpers()
+        self.stm_mqueue = queue.Queue()
+        self.android_wmqueue = queue.Queue()
+        self.img_queue = queue.Queue()
+        self.img_resqueue = queue.Queue()
+
+        self.androidConnectThread = Thread(target=self.androidConnect)
+        self.stmConnectThread = Thread(target=self.stmConnect)
+
+        self.androidWriteThread = Thread(target=self.androidWrite)
+        self.androidReadThread = Thread(target=self.androidRead)
+
+        self.stmWriteThread = Thread(target=self.stmWrite)
+
+        self.imageThread = Thread(target=self.imageSend)
+        self.imageResThread = Thread(target=self.imageResWrite)
+        self.camera = VideoStream(usePiCamera=True).start()
+        self.isFirst = True
+
+    def start(self):
+        try:
+            self.androidConnectThread.start()
+            self.androidConnectThread.join()
+            self.stmConnectThread.start()
+            self.androidReadThread.start()
+            self.androidWriteThread.start()
+            self.stmWriteThread.start()
+            self.imageThread.start()
+            self.imageResThread.start()
+        except Exception as error:
+            print("[START FAILED] something went wrong with starting")
+            print(error)
+
+########################################### CONNECTION METHODS ########################################################
+    def androidConnect(self):
+        try:
+            self.android.connectAndroid()
+        except Exception as error:
+            print("[CONNECT TO ANDROID THREAD] Error occured.")
+            print(error)
+
+    def stmConnect(self):
+        try:
+            self.stm.connectStm(1000)
+        except Exception as error:
+            print("[CONNECT TO STM] Error occurred")
+
+
+################################################## READ METHODS #######################################################
+
+    def stmWrite(self):
+        while True:
+            try:
+                if not self.stm_mqueue.empty():
+                    message = self.stm_mqueue.get()
+                    protocol_header, data = message['target'], message['data']
+                    if protocol_header == ProtocolHeaders.STM_HEADER:
+                        self.stm.writeToStm(data)
+                        feedback = self.stm.readFromStm().decode()
+                        while True:
+                            if feedback != f'{data}':
+                                continue
+                            else:
+                                img = self.imageCapture(1)
+                                self.img_queue.put(img)
+                                break
+                    else:
+                        print("Invalid header")
+
+            except Exception as error:
+                print(error)
+
+    def androidRead(self):
+        print("[Android Read Thread] android read thread start")
+        init_connect_msg = "test"
+        start_stm_msg = "start"
+        while True:
+            try:
+                message = self.android.readFromAndroid().decode()
+                print(f"Message from androidRead: {message}")
+                if message is None:
+                    continue
+                elif message == init_connect_msg:
+                    init_reply_msg = self.helper.messageFormatBundler(
+                        ProtocolHeaders.ANDROID_HEADER,
+                        f'{{"TEST": "Ack from rpi"}}'
+                    )
+                    self.android_wmqueue.put(init_reply_msg)
+                elif message == start_stm_msg:
+                    start_reply_msg = self.helper.messageFormatBundler(
+                        ProtocolHeaders.STM_HEADER,
+                        "t000"
+                    )
+                    self.stm_mqueue.put(start_reply_msg)
+            except Exception as error:
+                print("[Android read thread] error")
+                print(error)
+
+
+    def androidWrite(self):
+        while True:
+            try:
+                if not self.android_wmqueue.empty():
+                    message = self.android_wmqueue.get()
+                    protocol_header, data = message['target'], message['data']
+                    if protocol_header == ProtocolHeaders.ANDROID_HEADER:
+                        print(f"[ANDROID COMMS WRITE] Writing Data to android {message}")
+                        self.android.writeToAndroid(data)
+                    else:
+                        print("[ANDROID WRITE] Invalid header for Android Write thread")
+                        print(protocol_header)
+            except Exception as error:
+                print(error)
+
+    def imageResWrite(self):
+        while True:
+            if not self.img_resqueue.empty():
+                message = self.img_resqueue.get()
+                imageId = self.helper.android_obs_format2(message)
+
+                if imageId == '38' and self.isFirst:
+                    msg_format_bundled = self.helper.messageFormatBundler(ProtocolHeaders.STM_HEADER, 'u000')
+                    self.stm_mqueue.put(msg_format_bundled)
+                    self.isFirst = False
+                elif imageId == '39' and self.isFirst:
+                    msg_format_bundled = self.helper.messageFormatBundler(ProtocolHeaders.STM_HEADER, 'y000')
+                    self.stm_mqueue.put(msg_format_bundled)
+                    self.isFirst = False
+                elif imageId == '38':
+                    msg_format_bundled = self.helper.messageFormatBundler(ProtocolHeaders.STM_HEADER, 'o000')
+                    self.stm_mqueue.put(msg_format_bundled)
+                elif imageId == '39':
+                    msg_format_bundled = self.helper.messageFormatBundler(ProtocolHeaders.STM_HEADER, 'i000')
+                    self.stm_mqueue.put(msg_format_bundled)
+
+########################################## IMAGE RECOGNITION ##########################################################
+
+    def imageCapture(self, obstacle_id):
+        try:
+            print("[CAPTURING IMAGE] Capturing image...")
+            imageCaptured = self.camera.read()
+            imageBatchedInfo = {"obsId": obstacle_id, "image": imageCaptured}
+            return imageBatchedInfo
+        except Exception as error:
+            print(f"[IMAGE CAPTURE FAILED] Something went wrong with capturing image")
+            print(error)
+
+
+    def imageSend(self):
+        while True:
+            if not self.img_queue.empty():
+                try:
+                    sender = imagezmq.ImageSender(connect_to=self.imgServerUrl)
+                    rpiName = socket.gethostname()
+                    image_batched_info = self.img_queue.get()
+                    obsId, image = image_batched_info['obsId'], image_batched_info['image']
+                    reply = sender.send_image(rpiName, image)
+                    reply = reply.decode('utf-8')
+                    self.img_resqueue.put(reply)
+                    if reply == 'End':
+                        break
+                except Exception as error:
+                    print("############")
+                    print("\n[IMAGE SEND] An error occurred\n")
+                    print(error)
+                    print("############\n")
+
+if __name__ == "__main__":
+    t2MThread = Task2MultiThread()
+    t2MThread.start()

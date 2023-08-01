@@ -1,0 +1,152 @@
+import json
+class Helpers:
+
+    def removeAllCarrRet(self, message):
+        return message.strip()
+    
+    def removeTrailCarrRet(self, message):
+        return  message.rstrip()
+
+    def convertStringToJson(self, message):
+        return json.load(message)
+
+    def messageFormatBundler(self, target_header, data):
+        return {
+            'target': target_header,
+            'data': data
+        }
+
+    def convert_format_json(self, jsonString):
+        try:
+            obstacleDict = json.loads(jsonString)
+            obstacle_str = obstacleDict["obs"]
+            obstacle_list = self.str_clean(obstacle_str)
+            data_in_string = " ".join(obstacle_list)
+            return data_in_string
+        except Exception as error:
+            print("Json load err")
+            print(error)
+
+    def str_clean(self, jsonString):
+        strBracketRemoved = jsonString[1:-1]
+        return [item.strip() for item in strBracketRemoved.split(',')]
+
+    def algo_path_clean(self, algoStrPath):
+        MAPPINGS_DICT = {
+            'Forward': 'w010',
+            'RFturn': 'e090',
+            'RBturn': 'd090',
+            'LBturn': 'a090',
+            'Backward': 's010',
+            'LFturn': 'q090',
+            'LeftInPlace': 'n000',
+            'RightInPlace': 'm000',
+            'Pause': 'x010'
+        }
+        algo_path_list = algoStrPath.split('\n')
+        algo_path_list = [path.split() for path in algo_path_list if path.split() != []]
+        for i in range(len(algo_path_list)):
+            coord = algo_path_list[i]
+            if len(coord) == 0:
+                continue
+            coord.append(MAPPINGS_DICT[coord[3]])
+        combine_algo_path_list = self.path_combi2(algo_path_list, "w010")
+        combine_algo_path_list_2 = self.path_combi2(combine_algo_path_list, "s010")
+        return combine_algo_path_list_2
+
+    def android_coord_format(self, coords_data):
+        x, y, dir = coords_data[0], coords_data[1], coords_data[2]
+        MAPPINGS_DICT = {
+            '0': 'EAST',
+            '1': 'NORTH',
+            '2': 'WEST',
+            '3': 'SOUTH',
+        }
+        android_coord_str = f"{{'ROBOT': '{x},{y},{MAPPINGS_DICT[dir]}'}}"
+        return android_coord_str
+
+    def android_obs_format(self, obs_result, obsId):
+        android_format_str = ""
+        if len(obs_result) != 0:
+            formatted_list = obs_result.split(",")
+            formatted_list = [fmList.split() for fmList in formatted_list]
+            true_result = None
+            for result in formatted_list:
+                if result[1] != '0':
+                    true_result = result
+                    break
+            imageId = ''
+            if len(true_result) != 0:
+                imageId = true_result[0]
+            android_format_str = f'{{"TARGET": "{obsId},{imageId}"}}'
+        return android_format_str
+
+    def android_obs_format2(self, obs_result):
+        print(obs_result)
+        imageId = ''
+        if len(obs_result) != 0:
+            formatted_list = obs_result.split(",")
+            formatted_list = [fmList.split() for fmList in formatted_list]
+            true_result = formatted_list[0]
+            if len(true_result) != 0:
+                imageId = true_result[1]
+            print(f"ImageId: {imageId}")
+        return imageId
+
+    def path_combi(self, path_list):
+        wCount = 0
+        new_path = []
+        cache_start_coordinate = []
+        cache_coord_idx = -1
+        path_len = len(path_list)
+        for i in range(path_len):
+            if path_list[i][5] == 'w010':
+                if wCount == 0:
+                    cache_start_coordinate.append(path_list[i])
+                    print(cache_start_coordinate)
+                    cache_coord_idx += 1
+                wCount += 1
+                if wCount == 9:
+                    cache_start_coordinate[cache_coord_idx][5] = f'w0{wCount}0'
+                    wCount = 0
+                if (i + 1 < path_len and path_list[i + 1][5] != 'w010' and wCount < 10) or i + 1 == path_len:
+                    if wCount != 0:
+                        cache_start_coordinate[cache_coord_idx][5] = f'w0{wCount}0'
+                    if len(cache_start_coordinate) != 0:
+                        for j in range(0, cache_coord_idx + 1):
+                            new_path.append(cache_start_coordinate[j])
+                    wCount = 0
+                    cache_coord_idx = -1
+                    cache_start_coordinate.clear()
+            else:
+                new_path.append(path_list[i])
+        return new_path
+
+    def path_combi2(self, path_list, combi_command):
+        wCount = 0
+        new_path = []
+        cache_start_coordinate = []
+        cache_coord_idx = -1
+        path_len = len(path_list)
+        for i in range(path_len):
+            if path_list[i][5] == combi_command:
+                if wCount == 0:
+                    cache_start_coordinate.append(path_list[i])
+                    cache_coord_idx += 1
+                wCount += 1
+                if (i + 1 < path_len and path_list[i + 1][5] != combi_command) or i + 1 == path_len:
+                    if wCount != 0:
+                        if wCount < 10 and wCount > 0:
+                            cache_start_coordinate[cache_coord_idx][5] = f'{combi_command[0:2]}{wCount}{combi_command[3]}'
+                        elif wCount >= 10:
+                            cache_start_coordinate[cache_coord_idx][5] = f'{combi_command[0]}{wCount}{combi_command[3]}'
+                    if len(cache_start_coordinate) != 0:
+                        for j in range(0, cache_coord_idx + 1):
+                            new_path.append(cache_start_coordinate[j])
+                    wCount = 0
+                    cache_coord_idx = -1
+                    cache_start_coordinate.clear()
+            else:
+                new_path.append(path_list[i])
+        return new_path
+
